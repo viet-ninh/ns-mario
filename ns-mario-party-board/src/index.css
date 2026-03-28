@@ -1,0 +1,102 @@
+:root {
+  --bg: #efe0c3;
+  --bg-deep: #d9b988;
+  --panel-bg: rgba(255, 250, 243, 0.82);
+  --panel-bg-strong: rgba(255, 244, 229, 0.9);
+  --card-bg: rgba(255, 255, 255, 0.62);
+  --border: rgba(119, 79, 45, 0.18);
+  --border-strong: rgba(119, 79, 45, 0.24);
+  --text: #5d4634;
+  --text-h: #26170d;
+  --muted: #866548;
+  --shadow: 0 18px 40px rgba(78, 47, 17, 0.14);
+  --sans: 'Trebuchet MS', 'Avenir Next', 'Segoe UI', sans-serif;
+  --heading: 'Arial Rounded MT Bold', 'Trebuchet MS', 'Avenir Next', sans-serif;
+
+  font: 16px/1.5 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background:
+    radial-gradient(circle at top, rgba(255, 217, 149, 0.7), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(82, 177, 116, 0.2), transparent 24%),
+    linear-gradient(180deg, var(--bg), var(--bg-deep));
+}
+
+body,
+button,
+input,
+select {
+  font-family: var(--sans);
+}
+
+#root {
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3,
+strong {
+  color: var(--text-h);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--heading);
+  line-height: 1.05;
+}
+
+h1 {
+  font-size: clamp(2.4rem, 5vw, 4.6rem);
+}
+
+h2 {
+  font-size: clamp(1.2rem, 2vw, 1.7rem);
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 14px;
+  color: var(--text-h);
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid rgba(220, 89, 28, 0.32);
+  outline-offset: 2px;
+}
