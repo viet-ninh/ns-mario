@@ -1,4 +1,5 @@
 export type ItemKey = 'logs' | 'waterSpray' | 'doubleLogs' | 'wildfire'
+export type ShopItemKey = ItemKey | 'flameToken'
 
 export type SpaceKind =
   | 'start'
@@ -6,9 +7,10 @@ export type SpaceKind =
   | 'kindling'
   | 'water'
   | 'shop'
+  | 'hotSeat'
   | 'branch'
 
-export type EditableSpaceKind = 'regular' | 'kindling' | 'water' | 'shop'
+export type EditableSpaceKind = 'regular' | 'kindling' | 'water' | 'shop' | 'hotSeat'
 
 export interface TeamSetup {
   id: string
@@ -42,6 +44,8 @@ export interface BoardSpace {
   description: string
   x: number
   y: number
+  width?: number
+  height?: number
   next: string[]
 }
 
@@ -64,6 +68,8 @@ export interface PendingMove {
   stepsRemaining: number
 }
 
+export type MovementMode = 'auto' | 'manual'
+
 export interface BranchChoice {
   fromSpaceId: string
   nextOptions: string[]
@@ -73,8 +79,9 @@ export type TargetingAction = 'waterSpray' | 'wildfire' | null
 
 export type TurnPhase =
   | 'awaitingRoll'
-  | 'postRoll'
+  | 'choosingMoveMode'
   | 'choosingPath'
+  | 'manualMoving'
   | 'shop'
   | 'awaitingAction'
   | 'choosingTarget'
@@ -88,6 +95,7 @@ export interface GameState {
   phase: TurnPhase
   roll: RollState | null
   pendingMove: PendingMove | null
+  movementMode: MovementMode | null
   branchChoice: BranchChoice | null
   targetingAction: TargetingAction
   log: string[]
@@ -96,7 +104,13 @@ export interface GameState {
 
 export const MAX_ROUNDS = 15
 export const START_SPACE_ID = 'camp'
-export const FLAME_TOKEN_EXCHANGE_RATE = 20
+export const FLAME_TOKEN_COST_IN_EMBERS = 20
+export const DEFAULT_TILE_WIDTH = 88
+export const DEFAULT_TILE_HEIGHT = 66
+export const MIN_TILE_WIDTH = 60
+export const MAX_TILE_WIDTH = 180
+export const MIN_TILE_HEIGHT = 48
+export const MAX_TILE_HEIGHT = 140
 
 export const TEAM_COLOR_OPTIONS = [
   '#f97316',
@@ -123,6 +137,11 @@ export const ITEM_COSTS: Record<ItemKey, number> = {
   wildfire: 7,
 }
 
+export const SHOP_ITEM_COSTS: Record<ShopItemKey, number> = {
+  ...ITEM_COSTS,
+  flameToken: FLAME_TOKEN_COST_IN_EMBERS,
+}
+
 export const ITEM_LABELS: Record<ItemKey, string> = {
   logs: 'Log',
   waterSpray: 'Water Spray',
@@ -130,11 +149,21 @@ export const ITEM_LABELS: Record<ItemKey, string> = {
   wildfire: 'Wildfire',
 }
 
+export const SHOP_ITEM_LABELS: Record<ShopItemKey, string> = {
+  ...ITEM_LABELS,
+  flameToken: 'Flame Token',
+}
+
 export const ITEM_DESCRIPTIONS: Record<ItemKey, string> = {
   logs: 'Take an immediate extra 1d6 roll this turn.',
   waterSpray: "Reduce another team's next roll by 1.",
   doubleLogs: 'Double your current roll after you roll.',
   wildfire: 'Swap positions with another team.',
+}
+
+export const SHOP_ITEM_DESCRIPTIONS: Record<ShopItemKey, string> = {
+  ...ITEM_DESCRIPTIONS,
+  flameToken: 'Buy 1 Flame Token directly for 20 embers.',
 }
 
 export const DEFAULT_BOARD_MAP: BoardMap = {
@@ -345,6 +374,7 @@ export const createGameState = (
   phase: 'awaitingRoll',
   roll: null,
   pendingMove: null,
+  movementMode: null,
   branchChoice: null,
   targetingAction: null,
   log: [`${boardMap.name} is ready. Blaze through 15 rounds.`],
@@ -383,6 +413,11 @@ export const getTilePresentation = (kind: EditableSpaceKind) => {
       return {
         label: 'Shop',
         description: 'Buy one-use items with embers.',
+      }
+    case 'hotSeat':
+      return {
+        label: 'Hot Seat',
+        description: "Pause here to test the team's ability.",
       }
     case 'kindling':
       return {

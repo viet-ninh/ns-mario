@@ -1,4 +1,6 @@
 import {
+  DEFAULT_TILE_HEIGHT,
+  DEFAULT_TILE_WIDTH,
   START_SPACE_ID,
   getTilePresentation,
   type BoardMap,
@@ -18,6 +20,8 @@ const createStartSpace = (): BoardSpace => ({
   description: 'Complete a lap to earn a Flame Token.',
   x: 18,
   y: 50,
+  width: DEFAULT_TILE_WIDTH,
+  height: DEFAULT_TILE_HEIGHT,
   next: ['tile-1'],
 })
 
@@ -37,9 +41,22 @@ const createTile = (
     description: presentation.description,
     x,
     y,
+    width: DEFAULT_TILE_WIDTH,
+    height: DEFAULT_TILE_HEIGHT,
     next,
   }
 }
+
+const normalizeSpace = (space: BoardSpace): BoardSpace => ({
+  ...space,
+  width: space.width ?? DEFAULT_TILE_WIDTH,
+  height: space.height ?? DEFAULT_TILE_HEIGHT,
+})
+
+const normalizeMap = (map: BoardMap): BoardMap => ({
+  ...map,
+  spaces: map.spaces.map(normalizeSpace),
+})
 
 export const createStarterCustomMap = (name = 'Custom board'): BoardMap => ({
   id: createId('map'),
@@ -67,7 +84,7 @@ export const loadSavedCustomMaps = (): BoardMap[] => {
 
   try {
     const parsed = JSON.parse(raw) as BoardMap[]
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? parsed.map(normalizeMap) : []
   } catch {
     return []
   }

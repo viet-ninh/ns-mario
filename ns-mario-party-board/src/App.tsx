@@ -26,11 +26,17 @@ import {
 } from './boardMaps'
 import {
   DEFAULT_TEAMS,
-  FLAME_TOKEN_EXCHANGE_RATE,
-  ITEM_COSTS,
-  ITEM_DESCRIPTIONS,
-  ITEM_LABELS,
+  DEFAULT_TILE_HEIGHT,
+  DEFAULT_TILE_WIDTH,
+  FLAME_TOKEN_COST_IN_EMBERS,
+  MAX_TILE_HEIGHT,
+  MAX_TILE_WIDTH,
   MAX_ROUNDS,
+  MIN_TILE_HEIGHT,
+  MIN_TILE_WIDTH,
+  SHOP_ITEM_COSTS,
+  SHOP_ITEM_DESCRIPTIONS,
+  SHOP_ITEM_LABELS,
   TEAM_COLOR_OPTIONS,
   createGameState,
   getCurrentPlayer,
@@ -43,7 +49,9 @@ import {
   type EditableSpaceKind,
   type GameState,
   type ItemKey,
+  type MovementMode,
   type Player,
+  type ShopItemKey,
   type TeamSetup,
 } from './game'
 
@@ -65,6 +73,7 @@ function App() {
   const [gmTargetTeamId, setGmTargetTeamId] = useState<string>('')
   const [gmEmberAmount, setGmEmberAmount] = useState<number>(3)
   const editorBoardRef = useRef<HTMLDivElement | null>(null)
+  const gameBoardRef = useRef<HTMLDivElement | null>(null)
   const dragStateRef = useRef<{
     spaceId: string
     pointerId: number
@@ -72,7 +81,14 @@ function App() {
     startY: number
     moved: boolean
   } | null>(null)
+  const manualDragStateRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    moved: boolean
+  } | null>(null)
   const suppressClickRef = useRef<string | null>(null)
+  const [manualMovePosition, setManualMovePosition] = useState<{ x: number; y: number } | null>(null)
 
   const currentPlayer = game ? getCurrentPlayer(game) : null
   const rankedPlayers = game ? rankPlayers(game.players) : []
@@ -127,6 +143,11 @@ function App() {
 
   const getItemCount = (player: Player, item: ItemKey) => player.inventory[item]
 
+  const clampTileWidth = (value: number) => Math.max(MIN_TILE_WIDTH, Math.min(MAX_TILE_WIDTH, value))
+  const clampTileHeight = (value: number) => Math.max(MIN_TILE_HEIGHT, Math.min(MAX_TILE_HEIGHT, value))
+  const getSpaceWidth = (space: BoardSpace) => space.width ?? DEFAULT_TILE_WIDTH
+  const getSpaceHeight = (space: BoardSpace) => space.height ?? DEFAULT_TILE_HEIGHT
+
   const addEmbers = (draft: GameState, player: Player, delta: number) => {
     const previousEmbers = player.embers
     player.embers = Math.max(0, player.embers + delta)
@@ -144,15 +165,21 @@ function App() {
         `${player.name} loses ${Math.min(previousEmbers, -delta)} embers and now has ${player.embers}.`,
       )
     }
+  }
 
-    if (player.embers >= FLAME_TOKEN_EXCHANGE_RATE) {
-      const conversions = Math.floor(player.embers / FLAME_TOKEN_EXCHANGE_RATE)
-      player.embers %= FLAME_TOKEN_EXCHANGE_RATE
-      player.flameTokens += conversions
-      writeLog(
-        draft,
-        `${player.name} converts ${conversions * FLAME_TOKEN_EXCHANGE_RATE} embers into ${conversions} Flame Token${conversions > 1 ? 's' : ''}.`,
-      )
+  const moveCurrentPlayerToSpace = (draft: GameState, nextSpaceId: string) => {
+    const player = getCurrentPlayer(draft)
+    const previousPosition = player.position
+
+    player.position = nextSpaceId
+
+    if (
+      previousPosition !== draft.boardMap.startSpaceId &&
+      nextSpaceId === draft.boardMap.startSpaceId
+    ) {
+      player.laps += 1
+      player.flameTokens += 1
+      writeLog(draft, `${player.name} completes a lap and earns 1 Flame Token.`)
     }
   }
 
@@ -179,6 +206,11 @@ function App() {
       case 'shop': {
         writeLog(draft, `${player.name} lands on Shop and can buy items with embers.`)
         draft.phase = 'shop'
+        return
+      }
+      case 'hotSeat': {
+        writeLog(draft, `${player.name} lands on Hot Seat. Test that team's ability.`)
+        draft.phase = 'awaitingAction'
         return
       }
       default: {
@@ -219,20 +251,15 @@ function App() {
         return
       }
 
-      player.position = nextSpaceId
+      moveCurrentPlayerToSpace(draft, nextSpaceId)
       draft.pendingMove.stepsRemaining -= 1
       draft.branchChoice = null
       nextChoice = undefined
-
-      if (player.position === draft.boardMap.startSpaceId) {
-        player.laps += 1
-        player.flameTokens += 1
-        writeLog(draft, `${player.name} completes a lap and earns 1 Flame Token.`)
-      }
     }
 
     draft.pendingMove = null
     draft.roll = null
+    draft.movementMode = null
     resolveLanding(draft)
   }
 
@@ -246,11 +273,13 @@ function App() {
     const nextGame = createGameState(sanitizedTeams, nextBoard)
     setGame(nextGame)
     setGmTargetTeamId(nextGame.players[0]?.id ?? '')
+    setManualMovePosition(null)
     setMode('game')
   }
 
   const resetToSetup = () => {
     setGame(null)
+    setManualMovePosition(null)
     setMode('setup')
   }
 
@@ -268,8 +297,9 @@ function App() {
       isExtra: isExtraRoll,
       wasDoubled: false,
     }
-    draft.phase = 'postRoll'
+    draft.phase = 'choosingMoveMode'
     draft.pendingMove = null
+    draft.movementMode = null
     draft.branchChoice = null
 
     const rollLabel = isExtraRoll ? 'extra roll' : 'roll'
@@ -288,6 +318,8 @@ function App() {
   }
 
   const endTurn = () => {
+    setManualMovePosition(null)
+
     commitGame((draft) => {
       if (draft.currentPlayerIndex === draft.players.length - 1) {
         if (draft.round >= draft.maxRounds) {
@@ -305,6 +337,7 @@ function App() {
       draft.phase = 'awaitingRoll'
       draft.roll = null
       draft.pendingMove = null
+      draft.movementMode = null
       draft.branchChoice = null
       draft.targetingAction = null
 
@@ -313,18 +346,24 @@ function App() {
     })
   }
 
-  const buyItem = (item: ItemKey) => {
+  const buyItem = (item: ShopItemKey) => {
     commitGame((draft) => {
       const player = getCurrentPlayer(draft)
-      const price = ITEM_COSTS[item]
+      const price = SHOP_ITEM_COSTS[item]
 
       if (player.embers < price) {
         return
       }
 
       player.embers -= price
-      player.inventory[item] += 1
-      writeLog(draft, `${player.name} buys ${ITEM_LABELS[item]} for ${price} embers.`)
+
+      if (item === 'flameToken') {
+        player.flameTokens += 1
+      } else {
+        player.inventory[item] += 1
+      }
+
+      writeLog(draft, `${player.name} buys ${SHOP_ITEM_LABELS[item]} for ${price} embers.`)
     })
   }
 
@@ -407,9 +446,9 @@ function App() {
   }
 
   const applyManualEmbers = () => {
-    const amount = Math.max(1, Math.floor(gmEmberAmount || 0))
+    const amount = Math.trunc(gmEmberAmount || 0)
 
-    if (!gmTargetTeamId || !game || amount < 1) {
+    if (!gmTargetTeamId || !game || amount === 0) {
       return
     }
 
@@ -420,8 +459,14 @@ function App() {
         return
       }
 
+      const previousEmbers = target.embers
       addEmbers(draft, target, amount)
-      writeLog(draft, `Game Master grants ${amount} embers to ${target.name}.`)
+      writeLog(
+        draft,
+        amount > 0
+          ? `Game Master grants ${amount} embers to ${target.name}.`
+          : `Game Master subtracts ${Math.min(previousEmbers, Math.abs(amount))} embers from ${target.name}.`,
+      )
     })
   }
 
@@ -442,6 +487,10 @@ function App() {
       return <ShoppingBag size={16} />
     }
 
+    if (space.kind === 'hotSeat') {
+      return <Trophy size={16} />
+    }
+
     if (space.next.length > 1) {
       return <GitBranch size={16} />
     }
@@ -451,21 +500,33 @@ function App() {
 
   const clampPercent = (value: number) => Math.max(8, Math.min(92, value))
 
-  const moveTileToPointer = (spaceId: string, clientX: number, clientY: number) => {
-    const board = editorBoardRef.current
-
+  const getBoardPercentPosition = (
+    board: HTMLDivElement | null,
+    clientX: number,
+    clientY: number,
+  ) => {
     if (!board) {
-      return
+      return null
     }
 
     const rect = board.getBoundingClientRect()
 
     if (rect.width < 1 || rect.height < 1) {
-      return
+      return null
     }
 
-    const x = clampPercent(((clientX - rect.left) / rect.width) * 100)
-    const y = clampPercent(((clientY - rect.top) / rect.height) * 100)
+    return {
+      x: clampPercent(((clientX - rect.left) / rect.width) * 100),
+      y: clampPercent(((clientY - rect.top) / rect.height) * 100),
+    }
+  }
+
+  const moveTileToPointer = (spaceId: string, clientX: number, clientY: number) => {
+    const nextPosition = getBoardPercentPosition(editorBoardRef.current, clientX, clientY)
+
+    if (!nextPosition) {
+      return
+    }
 
     updateEditorMap((draft) => {
       const space = draft.spaces.find((entry) => entry.id === spaceId)
@@ -474,10 +535,129 @@ function App() {
         return
       }
 
-      space.x = Math.round(x)
-      space.y = Math.round(y)
+      space.x = Math.round(nextPosition.x)
+      space.y = Math.round(nextPosition.y)
     })
     setSaveNotice('')
+  }
+
+  const resetManualMovePosition = () => {
+    if (!game) {
+      return
+    }
+
+    const player = getCurrentPlayer(game)
+    const space = getSpace(game.boardMap, player.position)
+    setManualMovePosition({ x: space.x, y: space.y })
+  }
+
+  const selectMovementMode = (movementMode: MovementMode) => {
+    if (!game) {
+      return
+    }
+
+    if (movementMode === 'manual') {
+      resetManualMovePosition()
+      commitGame((draft) => {
+        draft.movementMode = 'manual'
+        draft.phase = 'manualMoving'
+        draft.pendingMove = null
+        draft.branchChoice = null
+      })
+      return
+    }
+
+    setManualMovePosition(null)
+    commitGame((draft) => {
+      draft.movementMode = 'auto'
+      continueMovement(draft)
+    })
+  }
+
+  const handleManualTokenPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!game || game.phase !== 'manualMoving') {
+      return
+    }
+
+    manualDragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handleManualTokenPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const dragState = manualDragStateRef.current
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return
+    }
+
+    const deltaX = Math.abs(event.clientX - dragState.startX)
+    const deltaY = Math.abs(event.clientY - dragState.startY)
+
+    if (!dragState.moved && deltaX + deltaY < 4) {
+      return
+    }
+
+    const nextPosition = getBoardPercentPosition(gameBoardRef.current, event.clientX, event.clientY)
+
+    if (!nextPosition) {
+      return
+    }
+
+    dragState.moved = true
+    setManualMovePosition({ x: Math.round(nextPosition.x), y: Math.round(nextPosition.y) })
+  }
+
+  const handleManualTokenPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const dragState = manualDragStateRef.current
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    manualDragStateRef.current = null
+  }
+
+  const getNearestSpace = (boardMap: BoardMap, x: number, y: number) =>
+    boardMap.spaces.reduce((closestSpace, space) => {
+      const closestDistance = Math.hypot(closestSpace.x - x, closestSpace.y - y)
+      const nextDistance = Math.hypot(space.x - x, space.y - y)
+
+      return nextDistance < closestDistance ? space : closestSpace
+    })
+
+  const confirmManualMovement = () => {
+    if (!game || !manualMovePosition) {
+      return
+    }
+
+    const targetSpace = getNearestSpace(game.boardMap, manualMovePosition.x, manualMovePosition.y)
+    setManualMovePosition(null)
+
+    commitGame((draft) => {
+      moveCurrentPlayerToSpace(draft, targetSpace.id)
+      draft.pendingMove = null
+      draft.roll = null
+      draft.branchChoice = null
+      draft.movementMode = null
+      resolveLanding(draft)
+    })
+  }
+
+  const cancelManualMovement = () => {
+    setManualMovePosition(null)
+    commitGame((draft) => {
+      draft.phase = 'choosingMoveMode'
+      draft.movementMode = null
+    })
   }
 
   const handleSpacePointerDown = (
@@ -550,6 +730,7 @@ function App() {
     boardMap: BoardMap,
     options?: {
       occupancy?: Record<string, Player[]>
+      hiddenPlayerIds?: string[]
       onSpaceClick?: (spaceId: string) => void
       onSpacePointerDown?: (
         spaceId: string,
@@ -562,12 +743,20 @@ function App() {
       selectedId?: string
       connectionId?: string | null
       currentPlayerPosition?: string
+      manualTokenPlayer?: Player | null
+      manualTokenPosition?: { x: number; y: number } | null
+      onManualTokenPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void
+      onManualTokenPointerMove?: (event: ReactPointerEvent<HTMLButtonElement>) => void
+      onManualTokenPointerUp?: (event: ReactPointerEvent<HTMLButtonElement>) => void
     },
-  ) => (
-    <div
-      className={`board-stage ${options?.onSpaceClick ? 'is-editor' : ''}`}
-      ref={options?.boardRef}
-    >
+  ) => {
+    const hiddenPlayerIds = new Set(options?.hiddenPlayerIds ?? [])
+
+    return (
+      <div
+        className={`board-stage ${options?.onSpaceClick ? 'is-editor' : ''}`}
+        ref={options?.boardRef}
+      >
       <svg className="board-lines" viewBox="0 0 100 100" aria-hidden="true">
         {boardMap.spaces.flatMap((space) =>
           space.next.map((nextId) => {
@@ -586,7 +775,9 @@ function App() {
       </svg>
 
       {boardMap.spaces.map((space) => {
-        const occupyingPlayers = options?.occupancy?.[space.id] ?? []
+        const occupyingPlayers = (options?.occupancy?.[space.id] ?? []).filter(
+          (player) => !hiddenPlayerIds.has(player.id),
+        )
         const isCurrentSpace = options?.currentPlayerPosition === space.id
         const isSelected = options?.selectedId === space.id
         const isConnectionSource = options?.connectionId === space.id
@@ -599,7 +790,12 @@ function App() {
             type="button"
             className={`space-node kind-${space.kind} ${isCurrentSpace ? 'is-current' : ''} ${isSelected ? 'is-selected' : ''} ${isConnectionSource ? 'is-connection-source' : ''} ${isConnectable ? 'is-connectable' : ''}`}
             key={space.id}
-            style={{ left: `${space.x}%`, top: `${space.y}%` }}
+            style={{
+              left: `${space.x}%`,
+              top: `${space.y}%`,
+              width: `${getSpaceWidth(space)}px`,
+              minHeight: `${getSpaceHeight(space)}px`,
+            }}
             onClick={() => {
               if (options?.shouldIgnoreClick?.(space.id)) {
                 return
@@ -635,8 +831,27 @@ function App() {
           </button>
         )
       })}
-    </div>
-  )
+
+      {options?.manualTokenPlayer && options.manualTokenPosition ? (
+        <button
+          type="button"
+          className="manual-token-piece"
+          style={{
+            left: `${options.manualTokenPosition.x}%`,
+            top: `${options.manualTokenPosition.y}%`,
+            backgroundColor: options.manualTokenPlayer.color,
+          }}
+          onPointerDown={options.onManualTokenPointerDown}
+          onPointerMove={options.onManualTokenPointerMove}
+          onPointerUp={options.onManualTokenPointerUp}
+          title={`Move ${options.manualTokenPlayer.name}`}
+        >
+          {options.manualTokenPlayer.name.slice(0, 1).toUpperCase()}
+        </button>
+      ) : null}
+      </div>
+    )
+  }
 
   const addTile = (kind: EditableSpaceKind) => {
     const tileCount = editorMap.spaces.filter((space) => space.id !== editorMap.startSpaceId).length
@@ -775,14 +990,14 @@ function App() {
             <span className="eyebrow">Board builder</span>
             <h1>Build the event map first</h1>
             <p>
-              Add regular, kindling, water bucket, and shop tiles. Connect them to build the route,
-              then save the board locally and carry it into team setup.
+              Add regular, kindling, water bucket, shop, and Hot Seat tiles. Connect them to build
+              the route, then save the board locally and carry it into team setup.
             </p>
           </div>
 
           <div className="hero-stats">
             <article>
-              <strong>4</strong>
+              <strong>5</strong>
               <span>Tile types</span>
             </article>
             <article>
@@ -830,6 +1045,10 @@ function App() {
               <button type="button" className="secondary-button" onClick={() => addTile('shop')}>
                 <ShoppingBag size={16} />
                 Add shop
+              </button>
+              <button type="button" className="secondary-button" onClick={() => addTile('hotSeat')}>
+                <Trophy size={16} />
+                Add hot seat
               </button>
             </div>
           </article>
@@ -937,6 +1156,7 @@ function App() {
                           <option value="kindling">Kindling</option>
                           <option value="water">Water Bucket</option>
                           <option value="shop">Shop</option>
+                          <option value="hotSeat">Hot Seat</option>
                         </select>
                       </label>
 
@@ -979,6 +1199,42 @@ function App() {
                       </button>
                     </div>
                   )}
+
+                  <div className="range-grid">
+                    <label className="stack-field">
+                      <span className="field-label">Tile width</span>
+                      <input
+                        type="number"
+                        min={MIN_TILE_WIDTH}
+                        max={MAX_TILE_WIDTH}
+                        step={2}
+                        value={getSpaceWidth(selectedSpace)}
+                        onChange={(event) => {
+                          const nextValue = clampTileWidth(Number(event.target.value) || DEFAULT_TILE_WIDTH)
+                          updateSelectedTile((space) => {
+                            space.width = nextValue
+                          })
+                        }}
+                      />
+                    </label>
+
+                    <label className="stack-field">
+                      <span className="field-label">Tile height</span>
+                      <input
+                        type="number"
+                        min={MIN_TILE_HEIGHT}
+                        max={MAX_TILE_HEIGHT}
+                        step={2}
+                        value={getSpaceHeight(selectedSpace)}
+                        onChange={(event) => {
+                          const nextValue = clampTileHeight(Number(event.target.value) || DEFAULT_TILE_HEIGHT)
+                          updateSelectedTile((space) => {
+                            space.height = nextValue
+                          })
+                        }}
+                      />
+                    </label>
+                  </div>
 
                   <div className="connection-list">
                     <span className="field-label">Outgoing connections</span>
@@ -1063,8 +1319,8 @@ function App() {
               <span>Rounds</span>
             </article>
             <article>
-              <strong>20</strong>
-              <span>Embers per Flame Token</span>
+              <strong>{FLAME_TOKEN_COST_IN_EMBERS}</strong>
+              <span>Embers per store Flame Token</span>
             </article>
           </div>
         </section>
@@ -1089,7 +1345,11 @@ function App() {
                 </article>
                 <article>
                   <ShoppingBag size={18} />
-                  <span>Shop: buy one-use items with embers</span>
+                  <span>Shop: buy items or Flame Tokens with embers</span>
+                </article>
+                <article>
+                  <Trophy size={18} />
+                  <span>Hot Seat: test a team's ability</span>
                 </article>
                 <article>
                   <GitBranch size={18} />
@@ -1247,12 +1507,19 @@ function App() {
         <article className="board-panel">
           <div className="panel-heading compact">
             <h2>Board</h2>
-            <p>Roll 1d6, follow the path, and loop back to Camp for Flame Tokens.</p>
+            <p>Roll 1d6, then choose automatic pathing or manual token placement for that turn.</p>
           </div>
 
           {renderBoardStage(game.boardMap, {
             occupancy: boardOccupancy,
             currentPlayerPosition: currentPlayer.position,
+            hiddenPlayerIds: game.phase === 'manualMoving' ? [currentPlayer.id] : [],
+            boardRef: gameBoardRef,
+            manualTokenPlayer: game.phase === 'manualMoving' ? currentPlayer : null,
+            manualTokenPosition: game.phase === 'manualMoving' ? manualMovePosition : null,
+            onManualTokenPointerDown: handleManualTokenPointerDown,
+            onManualTokenPointerMove: handleManualTokenPointerMove,
+            onManualTokenPointerUp: handleManualTokenPointerUp,
           })}
         </article>
 
@@ -1293,24 +1560,53 @@ function App() {
                 </button>
               )}
 
-              {game.phase === 'postRoll' && (
+              {game.phase === 'choosingMoveMode' && (
                 <div className="choice-group">
                   <div className="choice-copy">
                     <strong>Roll result</strong>
-                    <span>Use Double Logs before moving if you want.</span>
+                    <span>Use Double Logs if you want, then choose how this turn moves.</span>
                   </div>
                   {getItemCount(currentPlayer, 'doubleLogs') > 0 && !game.roll?.wasDoubled && (
                     <button type="button" className="secondary-button" onClick={useDoubleLogs}>
                       Use Double Logs ({getItemCount(currentPlayer, 'doubleLogs')})
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={() => commitGame((draft) => continueMovement(draft))}
-                  >
-                    Move {game.roll?.total} spaces
-                  </button>
+                  <div className="action-grid">
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => selectMovementMode('auto')}
+                    >
+                      Auto move {game.roll?.total} spaces
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => selectMovementMode('manual')}
+                    >
+                      Manual placement
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {game.phase === 'manualMoving' && (
+                <div className="choice-group">
+                  <div className="choice-copy">
+                    <strong>Manual movement</strong>
+                    <span>Drag the current team token anywhere, then confirm to snap it to the nearest tile.</span>
+                  </div>
+                  <div className="action-grid">
+                    <button type="button" className="primary-button" onClick={confirmManualMovement}>
+                      Confirm nearest tile
+                    </button>
+                    <button type="button" className="secondary-button" onClick={resetManualMovePosition}>
+                      Reset token
+                    </button>
+                    <button type="button" className="ghost-button" onClick={cancelManualMovement}>
+                      Back to move choices
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1340,7 +1636,7 @@ function App() {
                 <div className="choice-group">
                   <div className="choice-copy">
                     <strong>Turn summary</strong>
-                    <span>Use items or end turn. Every {FLAME_TOKEN_EXCHANGE_RATE} embers auto-converts to 1 Flame Token.</span>
+                    <span>Use items or end turn. Flame Tokens are bought in the shop or earned by laps.</span>
                   </div>
                   <div className="action-grid">
                     <button
@@ -1378,21 +1674,21 @@ function App() {
                 <div className="shop-panel">
                   <div className="choice-copy">
                     <strong>Shop</strong>
-                    <span>Spend embers to buy one-use items.</span>
+                    <span>Spend embers on one-use items or buy a Flame Token directly.</span>
                   </div>
 
                   <div className="shop-grid">
-                    {(Object.keys(ITEM_COSTS) as ItemKey[]).map((item) => (
+                    {(Object.keys(SHOP_ITEM_COSTS) as ShopItemKey[]).map((item) => (
                       <button
                         type="button"
                         key={item}
                         className="shop-item"
                         onClick={() => buyItem(item)}
-                        disabled={currentPlayer.embers < ITEM_COSTS[item]}
+                        disabled={currentPlayer.embers < SHOP_ITEM_COSTS[item]}
                       >
-                        <strong>{ITEM_LABELS[item]}</strong>
-                        <span>{ITEM_DESCRIPTIONS[item]}</span>
-                        <em>{ITEM_COSTS[item]} embers</em>
+                        <strong>{SHOP_ITEM_LABELS[item]}</strong>
+                        <span>{SHOP_ITEM_DESCRIPTIONS[item]}</span>
+                        <em>{SHOP_ITEM_COSTS[item]} embers</em>
                       </button>
                     ))}
                   </div>
@@ -1500,7 +1796,7 @@ function App() {
           <article className="status-card">
             <div className="panel-heading compact">
               <h2>Game Master</h2>
-              <p>Grant embers to any team at any time.</p>
+                <p>Add or subtract embers from any team at any time.</p>
             </div>
 
             <div className="editor-controls">
@@ -1520,10 +1816,9 @@ function App() {
               </label>
 
               <label className="stack-field">
-                <span className="field-label">Embers to add</span>
+                <span className="field-label">Embers to add or subtract</span>
                 <input
                   type="number"
-                  min={1}
                   step={1}
                   value={gmEmberAmount}
                   onChange={(event) => setGmEmberAmount(Number(event.target.value))}
@@ -1534,9 +1829,9 @@ function App() {
                 type="button"
                 className="secondary-button"
                 onClick={applyManualEmbers}
-                disabled={!gmTargetTeamId || gmEmberAmount < 1}
+                disabled={!gmTargetTeamId || Math.trunc(gmEmberAmount || 0) === 0}
               >
-                Add embers
+                Apply ember change
               </button>
             </div>
           </article>
