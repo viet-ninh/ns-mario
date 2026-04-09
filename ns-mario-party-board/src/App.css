@@ -269,6 +269,25 @@
   gap: 16px;
 }
 
+.game-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  align-items: end;
+  gap: 12px;
+}
+
+.manual-move-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.manual-move-field {
+  min-width: 180px;
+}
+
 .turn-badge,
 .spotlight {
   --team-color: #ef6c24;
@@ -710,6 +729,15 @@
   .sidebar-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .game-header-actions,
+  .manual-move-toolbar {
+    justify-content: stretch;
+  }
+
+  .manual-move-field {
+    min-width: 0;
   }
 
   .team-grid,
