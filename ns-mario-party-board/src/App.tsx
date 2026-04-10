@@ -257,6 +257,13 @@ function App() {
       draft.pendingMove.stepsRemaining -= 1
       draft.branchChoice = null
       nextChoice = undefined
+
+      const landedSpace = getSpace(draft.boardMap, player.position)
+      if (landedSpace.kind === 'shop' && draft.pendingMove.stepsRemaining > 0) {
+        writeLog(draft, `${player.name} passes through the Shop.`)
+        draft.phase = 'shopPassthrough'
+        return
+      }
     }
 
     draft.pendingMove = null
@@ -378,6 +385,34 @@ function App() {
     })
   }
 
+  const buyPassthroughItem = (item: ShopItemKey) => {
+    commitGame((draft) => {
+      const player = getCurrentPlayer(draft)
+      const price = SHOP_ITEM_COSTS[item]
+
+      if (player.embers < price) {
+        return
+      }
+
+      player.embers -= price
+
+      if (item === 'flameToken') {
+        player.flameTokens += 1
+      } else {
+        player.inventory[item] += 1
+      }
+
+      writeLog(draft, `${player.name} buys ${SHOP_ITEM_LABELS[item]} for ${price} embers.`)
+      continueMovement(draft)
+    })
+  }
+
+  const passShopPassthrough = () => {
+    commitGame((draft) => {
+      continueMovement(draft)
+    })
+  }
+
   const useLog = () => {
     commitGame((draft) => {
       const player = getCurrentPlayer(draft)
@@ -389,21 +424,6 @@ function App() {
       player.inventory.logs -= 1
       writeLog(draft, `${player.name} uses a Log for an extra roll.`)
       performRoll(draft, true)
-    })
-  }
-
-  const useDoubleLogs = () => {
-    commitGame((draft) => {
-      const player = getCurrentPlayer(draft)
-
-      if (!draft.roll || draft.roll.wasDoubled || player.inventory.doubleLogs < 1) {
-        return
-      }
-
-      player.inventory.doubleLogs -= 1
-      draft.roll.total *= 2
-      draft.roll.wasDoubled = true
-      writeLog(draft, `${player.name} uses Double Logs and boosts move to ${draft.roll.total}.`)
     })
   }
 
@@ -1684,17 +1704,9 @@ function App() {
                 <div className="choice-group">
                   <div className="choice-copy">
                     <strong>Ready to move</strong>
-                    <span>Use Double Logs if needed, then continue the rolled move.</span>
+                    <span>Continue with your rolled move.</span>
                   </div>
                   <div className="action-grid">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={useDoubleLogs}
-                      disabled={game.roll.wasDoubled || getItemCount(currentPlayer, 'doubleLogs') < 1}
-                    >
-                      Double Logs ({getItemCount(currentPlayer, 'doubleLogs')})
-                    </button>
                     <button
                       type="button"
                       className="primary-button"
@@ -1763,6 +1775,39 @@ function App() {
                       End turn
                     </button>
                   </div>
+                </div>
+              )}
+
+              {game.phase === 'shopPassthrough' && (
+                <div className="shop-panel">
+                  <div className="choice-copy">
+                    <strong>Shop</strong>
+                    <span>Passing through — buy one item and keep moving, or skip.</span>
+                  </div>
+
+                  <div className="shop-grid">
+                    {(Object.keys(SHOP_ITEM_COSTS) as ShopItemKey[]).map((item) => (
+                      <button
+                        type="button"
+                        key={item}
+                        className="shop-item"
+                        onClick={() => buyPassthroughItem(item)}
+                        disabled={currentPlayer.embers < SHOP_ITEM_COSTS[item]}
+                      >
+                        <strong>{SHOP_ITEM_LABELS[item]}</strong>
+                        <span>{SHOP_ITEM_DESCRIPTIONS[item]}</span>
+                        <em>{SHOP_ITEM_COSTS[item]} embers</em>
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={passShopPassthrough}
+                  >
+                    Keep moving
+                  </button>
                 </div>
               )}
 

@@ -1,4 +1,4 @@
-export type ItemKey = 'logs' | 'waterSpray' | 'doubleLogs' | 'wildfire'
+export type ItemKey = 'logs' | 'waterSpray' | 'wildfire'
 export type ShopItemKey = ItemKey | 'flameToken'
 
 export type SpaceKind =
@@ -21,7 +21,6 @@ export interface TeamSetup {
 export interface Inventory {
   logs: number
   waterSpray: number
-  doubleLogs: number
   wildfire: number
 }
 
@@ -83,6 +82,7 @@ export type TurnPhase =
   | 'choosingPath'
   | 'manualMoving'
   | 'shop'
+  | 'shopPassthrough'
   | 'awaitingAction'
   | 'choosingTarget'
 
@@ -104,7 +104,7 @@ export interface GameState {
 
 export const MAX_ROUNDS = 15
 export const START_SPACE_ID = 'camp'
-export const FLAME_TOKEN_COST_IN_EMBERS = 20
+export const FLAME_TOKEN_COST_IN_EMBERS = 15
 export const DEFAULT_TILE_WIDTH = 88
 export const DEFAULT_TILE_HEIGHT = 66
 export const MIN_TILE_WIDTH = 60
@@ -133,7 +133,6 @@ export const DEFAULT_TEAMS: TeamSetup[] = [
 export const ITEM_COSTS: Record<ItemKey, number> = {
   logs: 3,
   waterSpray: 3,
-  doubleLogs: 5,
   wildfire: 7,
 }
 
@@ -145,7 +144,6 @@ export const SHOP_ITEM_COSTS: Record<ShopItemKey, number> = {
 export const ITEM_LABELS: Record<ItemKey, string> = {
   logs: 'Log',
   waterSpray: 'Water Spray',
-  doubleLogs: 'Double Logs',
   wildfire: 'Wildfire',
 }
 
@@ -157,13 +155,12 @@ export const SHOP_ITEM_LABELS: Record<ShopItemKey, string> = {
 export const ITEM_DESCRIPTIONS: Record<ItemKey, string> = {
   logs: 'Take an immediate extra 1d6 roll this turn.',
   waterSpray: "Reduce another team's next roll by 1.",
-  doubleLogs: 'Double your current roll after you roll.',
   wildfire: 'Swap positions with another team.',
 }
 
 export const SHOP_ITEM_DESCRIPTIONS: Record<ShopItemKey, string> = {
   ...ITEM_DESCRIPTIONS,
-  flameToken: 'Buy 1 Flame Token directly for 20 embers.',
+  flameToken: 'Buy 1 Flame Token directly for 15 embers.',
 }
 
 export const DEFAULT_BOARD_MAP: BoardMap = {
@@ -348,7 +345,6 @@ export const DEFAULT_BOARD_MAP: BoardMap = {
 export const createInventory = (): Inventory => ({
   logs: 0,
   waterSpray: 0,
-  doubleLogs: 0,
   wildfire: 0,
 })
 
